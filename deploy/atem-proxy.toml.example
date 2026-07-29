@@ -1,0 +1,20 @@
+# Upstream ATEM switcher (IP or host:port; default port 9910)
+atem = "192.168.1.50"
+
+# Client-facing UDP bind address
+bind = "0.0.0.0:9910"
+
+# Optional Bonjour / mDNS announce (clients can always connect by IP)
+mdns = false
+
+# Drop clients that go silent (milliseconds)
+client_idle_ms = 1000
+
+# Upstream reconnect base backoff (milliseconds)
+reconnect_ms = 1000
+
+# tracing filter
+log = "info"
+
+# Optional log file (Windows Service defaults to %ProgramData%\AtemProxy\atem-proxy.log)
+# log_file = "C:/ProgramData/AtemProxy/atem-proxy.log"
