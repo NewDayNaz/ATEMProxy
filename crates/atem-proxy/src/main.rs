@@ -187,8 +187,10 @@ mod windows_svc {
     const SERVICE_DISPLAY: &str = "ATEM Proxy";
 
     pub fn install(config: Option<PathBuf>) -> Result<()> {
-        let manager =
-            ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)?;
+        let manager = ServiceManager::local_computer(
+            None::<&str>,
+            ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+        )?;
         let exe = std::env::current_exe().context("current_exe")?;
         let mut args = vec![OsString::from("service"), OsString::from("run")];
         let cfg_path = config.unwrap_or_else(Config::default_windows_config_path);
@@ -215,7 +217,8 @@ mod windows_svc {
             account_name: None,
             account_password: None,
         };
-        let service = manager.create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)?;
+        let service =
+            manager.create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)?;
         service.set_description("Transparent multi-client Blackmagic ATEM UDP proxy")?;
         println!("Installed Windows service '{SERVICE_NAME}'");
         Ok(())
@@ -223,7 +226,8 @@ mod windows_svc {
 
     pub fn uninstall() -> Result<()> {
         let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-        let service = manager.open_service(SERVICE_NAME, ServiceAccess::DELETE | ServiceAccess::STOP)?;
+        let service =
+            manager.open_service(SERVICE_NAME, ServiceAccess::DELETE | ServiceAccess::STOP)?;
         let _ = service.stop();
         service.delete()?;
         println!("Uninstalled Windows service '{SERVICE_NAME}'");

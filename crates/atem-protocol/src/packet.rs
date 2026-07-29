@@ -91,9 +91,17 @@ pub fn decode_packet(buf: &[u8]) -> Result<(PacketHeader, &[u8]), ProtocolError>
 }
 
 pub fn encode_packet(header: &PacketHeader, payload: &[u8]) -> Vec<u8> {
+    let total = HEADER_LEN + payload.len();
+    // Length field is only 11 bits; refuse silent truncation.
+    debug_assert!(
+        total <= 0x07FF,
+        "ATEM packet length {total} exceeds 11-bit header field"
+    );
+    let total = total.min(0x07FF);
     let mut h = *header;
-    h.length = (HEADER_LEN + payload.len()) as u16;
-    let mut out = vec![0u8; h.length as usize];
+    h.length = total as u16;
+    let payload = &payload[..total.saturating_sub(HEADER_LEN)];
+    let mut out = vec![0u8; total];
     let mut hdr = [0u8; HEADER_LEN];
     h.encode(&mut hdr);
     out[..HEADER_LEN].copy_from_slice(&hdr);

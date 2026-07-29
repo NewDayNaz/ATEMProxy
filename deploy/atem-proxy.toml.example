@@ -8,7 +8,7 @@ bind = "0.0.0.0:9910"
 mdns = false
 
 # Drop clients that go silent (milliseconds)
-client_idle_ms = 1000
+client_idle_ms = 5000
 
 # Upstream reconnect base backoff (milliseconds)
 reconnect_ms = 1000

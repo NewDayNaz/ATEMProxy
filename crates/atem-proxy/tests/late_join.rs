@@ -1,7 +1,7 @@
 //! Integration-style tests for state cache late-join behavior (no real ATEM required).
 
-use atem_proxy::cache::{framed, StateCache};
 use atem_protocol::{parse_commands, INIT_COMPLETE};
+use atem_proxy::cache::{framed, StateCache};
 
 #[test]
 fn late_join_dump_bounded_after_many_updates() {
@@ -13,11 +13,7 @@ fn late_join_dump_bounded_after_many_updates() {
         cache.ingest_payload(&framed(*b"ZzZz", &[1, 2, (i % 3) as u8]));
     }
     // Only a handful of coalesced entries, not 10k+
-    assert!(
-        cache.len() < 20,
-        "cache grew unbounded: {}",
-        cache.len()
-    );
+    assert!(cache.len() < 20, "cache grew unbounded: {}", cache.len());
 
     let dump = cache.dump();
     let last = parse_commands(dump.last().expect("dump")).unwrap();

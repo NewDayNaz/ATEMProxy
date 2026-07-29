@@ -12,7 +12,10 @@ pub enum FilterAction {
     /// Forward framed command bytes upstream.
     Forward(Vec<u8>),
     /// Dropped (lock/transfer/etc).
-    Dropped { name: CommandName, reason: &'static str },
+    Dropped {
+        name: CommandName,
+        reason: &'static str,
+    },
     /// Audio subscription changed; optionally forward enable/disable command.
     AudioSubscribe {
         enable: bool,
@@ -23,6 +26,8 @@ pub enum FilterAction {
 #[derive(Debug, Default)]
 struct AudioSubs {
     clients: HashSet<SocketAddr>,
+    /// Last enable command forwarded upstream (used to synthesize disable on last leave).
+    last_enable: Option<Vec<u8>>,
 }
 
 /// Fan-in filter: drop lock/transfer, edge-trigger audio levels, forward the rest.
@@ -41,23 +46,25 @@ impl CommandFilter {
         self.audio.lock().clients.len()
     }
 
-    pub fn client_disconnected(&self, addr: SocketAddr) -> Option<bool> {
+    /// On client disconnect: if that client was the last audio subscriber, returns a disable
+    /// command to forward upstream.
+    pub fn client_disconnected(&self, addr: SocketAddr) -> Option<Vec<u8>> {
         let mut g = self.audio.lock();
         if !g.clients.remove(&addr) {
             return None;
         }
         if g.clients.is_empty() {
-            Some(false)
-        } else {
-            None
+            if let Some(enable_cmd) = g.last_enable.clone() {
+                return Some(synthesize_audio_disable(&enable_cmd));
+            }
         }
+        None
     }
 
     pub fn process_payload(&self, from: SocketAddr, payload: &[u8]) -> Vec<FilterAction> {
         let cmds = match parse_commands(payload) {
             Ok(c) => c,
             Err(_) => {
-                // Forward opaque payload as a whole if it doesn't parse.
                 return vec![FilterAction::Forward(payload.to_vec())];
             }
         };
@@ -75,7 +82,8 @@ impl CommandFilter {
                 self.warn_once(from, cmd.name, "transfer");
                 actions.push(FilterAction::Dropped {
                     name: cmd.name,
-                    reason: "data transfer not supported through proxy; upload media directly to ATEM",
+                    reason:
+                        "data transfer not supported through proxy; upload media directly to ATEM",
                 });
                 continue;
             }
@@ -86,6 +94,7 @@ impl CommandFilter {
                     let before = g.clients.len();
                     if enable {
                         g.clients.insert(from);
+                        g.last_enable = Some(cmd.raw.to_vec());
                     } else {
                         g.clients.remove(&from);
                     }
@@ -98,9 +107,16 @@ impl CommandFilter {
                         None
                     }
                 };
+                let forward = edge.map(|en| {
+                    if en {
+                        cmd.raw.to_vec()
+                    } else {
+                        synthesize_audio_disable(cmd.raw)
+                    }
+                });
                 actions.push(FilterAction::AudioSubscribe {
                     enable: edge.unwrap_or(enable),
-                    forward: edge.map(|_| cmd.raw.to_vec()),
+                    forward,
                 });
                 continue;
             }
@@ -123,6 +139,14 @@ fn parse_enable_flag(body: &[u8]) -> Option<bool> {
     body.last().map(|b| *b != 0)
 }
 
+fn synthesize_audio_disable(enable_cmd: &[u8]) -> Vec<u8> {
+    let mut out = enable_cmd.to_vec();
+    if let Some(last) = out.last_mut() {
+        *last = 0;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +161,23 @@ mod tests {
         let actions = f.process_payload(addr, &payload);
         assert!(matches!(actions[0], FilterAction::Dropped { .. }));
         assert!(matches!(actions[1], FilterAction::Forward(_)));
+    }
+
+    #[test]
+    fn last_audio_client_disconnect_returns_disable() {
+        let f = CommandFilter::new();
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let sub = serialize_command(CommandName(*b"SALN"), &[1]);
+        let actions = f.process_payload(addr, &sub);
+        assert!(matches!(
+            &actions[0],
+            FilterAction::AudioSubscribe {
+                enable: true,
+                forward: Some(_)
+            }
+        ));
+        let disable = f.client_disconnected(addr).expect("disable cmd");
+        assert_eq!(*disable.last().unwrap(), 0);
+        assert!(f.client_disconnected(addr).is_none());
     }
 }

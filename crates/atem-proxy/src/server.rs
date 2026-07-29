@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -45,6 +46,7 @@ pub async fn run_server(
     // Fan-out task from upstream events
     let mut events = upstream.events.subscribe();
     let sessions_e = sessions.clone();
+    let cache_e = cache.clone();
     let cancel_e = cancel.clone();
     tokio::spawn(async move {
         loop {
@@ -73,7 +75,17 @@ pub async fn run_server(
                                 }
                             }
                         }
-                        Err(_) => {}
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(skipped = n, "client fan-out lagged; resyncing opened clients");
+                            let dump = cache_e.dump();
+                            let mut g = sessions_e.lock();
+                            for sess in g.values_mut() {
+                                if sess.opened {
+                                    sess.rel.queue_commands_packed(&dump);
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
             }
@@ -84,8 +96,9 @@ pub async fn run_server(
     let sessions_t = sessions.clone();
     let sock_t = sock.clone();
     let filter_t = filter.clone();
+    let upstream_t = upstream.cmd_tx.clone();
     let cancel_t = cancel.clone();
-    let idle = Duration::from_millis(client_idle_ms.max(200));
+    let idle = Duration::from_millis(client_idle_ms.max(500));
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_millis(5));
         loop {
@@ -111,7 +124,13 @@ pub async fn run_server(
                         }
                     }
                     for addr in dead {
-                        let _ = filter_t.client_disconnected(addr);
+                        if let Some(disable) = filter_t.client_disconnected(addr) {
+                            if let Err(e) = upstream_t.send(disable).await {
+                                warn!(error = %e, "failed to forward audio unsubscribe");
+                            } else {
+                                info!(%addr, "disabled upstream audio levels (last subscriber left)");
+                            }
+                        }
                         info!(%addr, "client timed out");
                     }
                     for (addr, pkt) in packets {
@@ -146,6 +165,7 @@ pub async fn run_server(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_datagram(
     data: &[u8],
     addr: SocketAddr,
@@ -159,17 +179,19 @@ async fn handle_datagram(
     let (hdr, payload) = decode_packet(data)?;
 
     if is_handshake_packet(hdr.flags) {
-        if !upstream.connected.load(Ordering::SeqCst) && !cache.is_ready() {
+        if !upstream.connected.load(Ordering::SeqCst) || !cache.is_ready() {
             debug!(%addr, "rejecting handshake; upstream not ready");
             return Ok(());
         }
-        let reply = build_server_handshake_reply(&hdr);
-        sock.send_to(&reply, addr).await?;
-
         let sid_index = next_sid.fetch_add(1, Ordering::SeqCst);
         let session_id = server_session_id(sid_index);
-        let mut cfg = ReliableConfig::default();
-        cfg.idle_timeout = Duration::from_millis(5_000);
+        let reply = build_server_handshake_reply(session_id);
+        sock.send_to(&reply, addr).await?;
+
+        let cfg = ReliableConfig {
+            idle_timeout: Duration::from_millis(5_000),
+            ..Default::default()
+        };
         let mut rel = ReliableEndpoint::new(session_id, cfg);
         rel.note_recv();
         sessions.lock().insert(
@@ -186,6 +208,7 @@ async fn handle_datagram(
     }
 
     let mut retransmit: Option<Vec<u8>> = None;
+    let mut forward_cmds: Vec<Vec<u8>> = Vec::new();
     {
         let mut g = sessions.lock();
         let Some(sess) = g.get_mut(&addr) else {
@@ -219,14 +242,12 @@ async fn handle_datagram(
                 let actions = filter.process_payload(addr, payload);
                 for action in actions {
                     match action {
-                        FilterAction::Forward(raw) => {
-                            let _ = upstream.cmd_tx.try_send(raw);
-                        }
+                        FilterAction::Forward(raw) => forward_cmds.push(raw),
                         FilterAction::Dropped { .. } => {}
                         FilterAction::AudioSubscribe { enable, forward } => {
                             sess.audio = enable;
                             if let Some(raw) = forward {
-                                let _ = upstream.cmd_tx.try_send(raw);
+                                forward_cmds.push(raw);
                             }
                         }
                     }
@@ -234,8 +255,17 @@ async fn handle_datagram(
             }
         }
     }
+
     if let Some(req) = retransmit {
         sock.send_to(&req, addr).await?;
+    }
+
+    // Awaited send: backpressure instead of silent try_send drops.
+    for raw in forward_cmds {
+        if let Err(e) = upstream.cmd_tx.send(raw).await {
+            warn!(%addr, error = %e, "upstream command channel closed");
+            break;
+        }
     }
     Ok(())
 }

@@ -15,8 +15,8 @@ pub use command::{
 };
 pub use error::ProtocolError;
 pub use packet::{
-    decode_packet, encode_packet, ATEM_UDP_PORT, HEADER_LEN, MAX_PACKET_LEN, PacketFlags,
-    PacketHeader,
+    decode_packet, encode_packet, PacketFlags, PacketHeader, ATEM_UDP_PORT, HEADER_LEN,
+    MAX_PACKET_LEN,
 };
 pub use reliable::{
     is_ack_covering, next_packet_id, AckState, InFlightEntry, ReliableConfig, ReliableEndpoint,

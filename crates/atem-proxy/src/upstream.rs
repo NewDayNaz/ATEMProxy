@@ -5,6 +5,7 @@ use atem_protocol::{
     is_handshake_packet, parse_commands, parse_handshake_status, PacketFlags, ReliableConfig,
     ReliableEndpoint, HANDSHAKE_OK_STATUS, INIT_COMPLETE,
 };
+use bytes::Bytes;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,9 +20,9 @@ pub enum UpstreamEvent {
     Connected,
     Disconnected,
     /// Framed command payload for all clients.
-    StatePayload(Vec<u8>),
+    StatePayload(Bytes),
     /// High-rate audio levels for subscribers only.
-    AudioLevels(Vec<u8>),
+    AudioLevels(Bytes),
 }
 
 pub struct UpstreamHandle {
@@ -43,8 +44,10 @@ pub fn spawn_upstream(
     let events_tx = events.clone();
 
     tokio::spawn(async move {
-        let mut backoff = Duration::from_millis(reconnect_ms.max(200));
+        let base = Duration::from_millis(reconnect_ms.max(200));
+        let mut backoff = base;
         while !cancel.is_cancelled() {
+            let reached_ready = Arc::new(AtomicBool::new(false));
             match run_session(
                 atem,
                 &cache,
@@ -52,23 +55,30 @@ pub fn spawn_upstream(
                 &events_tx,
                 &mut cmd_rx,
                 &cancel,
+                &reached_ready,
             )
             .await
             {
                 Ok(()) => info!("upstream session closed"),
                 Err(e) => error!(error = %e, "upstream session failed"),
             }
+            let ok = reached_ready.load(Ordering::SeqCst);
             connected_flag.store(false, Ordering::SeqCst);
             cache.clear();
             let _ = events_tx.send(UpstreamEvent::Disconnected);
             if cancel.is_cancelled() {
                 break;
             }
+            if ok {
+                backoff = base;
+            }
             tokio::select! {
                 _ = cancel.cancelled() => break,
                 _ = tokio::time::sleep(backoff) => {}
             }
-            backoff = (backoff * 2).min(Duration::from_secs(30));
+            if !ok {
+                backoff = (backoff * 2).min(Duration::from_secs(30));
+            }
         }
     });
 
@@ -86,6 +96,7 @@ async fn run_session(
     events: &broadcast::Sender<UpstreamEvent>,
     cmd_rx: &mut mpsc::Receiver<Vec<u8>>,
     cancel: &CancellationToken,
+    reached_ready: &AtomicBool,
 ) -> Result<()> {
     let sock = UdpSocket::bind("0.0.0.0:0")
         .await
@@ -95,7 +106,7 @@ async fn run_session(
         .with_context(|| format!("connect to ATEM {atem}"))?;
     info!(%atem, local = ?sock.local_addr().ok(), "connecting upstream");
 
-    let client_session = (rand_session()) & 0x7FFF;
+    let client_session = random_session() & 0x7FFF;
     let hello = build_client_handshake(client_session);
     sock.send(&hello).await?;
 
@@ -108,13 +119,14 @@ async fn run_session(
         bail!("expected handshake reply, got flags={:?}", hdr.flags);
     }
     if parse_handshake_status(payload) != Some(HANDSHAKE_OK_STATUS) {
-        bail!("ATEM rejected handshake: status={:?}", parse_handshake_status(payload));
+        bail!(
+            "ATEM rejected handshake: status={:?}",
+            parse_handshake_status(payload)
+        );
     }
 
-    // Session ID may still be temporary; adopt from subsequent packets.
     let mut session_id = hdr.session_id;
     let mut rel = ReliableEndpoint::new(session_id, ReliableConfig::default());
-    // ACK packet 0 / open
     if let Some(ack) = {
         rel.ack.highest_recv = Some(0);
         rel.build_ack_packet()
@@ -123,6 +135,7 @@ async fn run_session(
     }
 
     let mut init_complete = false;
+    let mut pending_cmds: Vec<Vec<u8>> = Vec::new();
     let mut tick = tokio::time::interval(Duration::from_millis(5));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -131,12 +144,8 @@ async fn run_session(
             _ = cancel.cancelled() => return Ok(()),
             cmd = cmd_rx.recv() => {
                 match cmd {
-                    Some(raw) => {
-                        // Pack single framed command(s)
-                        if raw.len() >= 8 {
-                            rel.queue_payload(raw);
-                        }
-                    }
+                    Some(raw) if raw.len() >= 8 => pending_cmds.push(raw),
+                    Some(_) => {}
                     None => return Ok(()),
                 }
             }
@@ -179,17 +188,21 @@ async fn run_session(
                         events,
                         &mut init_complete,
                         connected,
+                        reached_ready,
                         &mut rel,
                         &sock,
                     ).await?;
                 } else if reliable && !init_complete {
-                    // Empty reliable packet often marks end of init flood.
                     debug!("empty reliable upstream packet during init");
                 }
             }
             _ = tick.tick() => {
                 if rel.is_timed_out() {
                     bail!("upstream idle timeout");
+                }
+                if !pending_cmds.is_empty() {
+                    let batch = std::mem::take(&mut pending_cmds);
+                    rel.queue_commands_packed(&batch);
                 }
                 let now = Instant::now();
                 for pkt in rel.poll_outbound(now) {
@@ -200,12 +213,14 @@ async fn run_session(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_upstream_payload(
     payload: &[u8],
     cache: &StateCache,
     events: &broadcast::Sender<UpstreamEvent>,
     init_complete: &mut bool,
     connected: &AtomicBool,
+    reached_ready: &AtomicBool,
     rel: &mut ReliableEndpoint,
     sock: &UdpSocket,
 ) -> Result<()> {
@@ -214,25 +229,17 @@ async fn handle_upstream_payload(
         Err(e) => {
             warn!(error = %e, "upstream command parse failed; forwarding raw");
             cache.ingest_payload(payload);
-            let _ = events.send(UpstreamEvent::StatePayload(payload.to_vec()));
+            let _ = events.send(UpstreamEvent::StatePayload(Bytes::copy_from_slice(payload)));
             return Ok(());
         }
     };
 
     let mut state_chunk = Vec::new();
     let mut audio_chunk = Vec::new();
+    let mut saw_incm = false;
     for cmd in &cmds {
         if cmd.name == INIT_COMPLETE {
-            *init_complete = true;
-            cache.ingest_payload(payload);
-            cache.set_ready(true);
-            if !connected.swap(true, Ordering::SeqCst) {
-                info!(version = ?cache.version(), product = ?cache.product(), "upstream ready");
-                let _ = events.send(UpstreamEvent::Connected);
-                rel.opened = true;
-                let ack = build_init_complete_ack(rel.session_id, rel.ack.highest_recv.unwrap_or(0));
-                sock.send(&ack).await?;
-            }
+            saw_incm = true;
             continue;
         }
         if is_ephemeral_command(cmd.name) {
@@ -244,28 +251,35 @@ async fn handle_upstream_payload(
 
     if !state_chunk.is_empty() {
         cache.ingest_payload(&state_chunk);
-        let _ = events.send(UpstreamEvent::StatePayload(state_chunk));
+        let _ = events.send(UpstreamEvent::StatePayload(Bytes::from(state_chunk)));
     }
     if !audio_chunk.is_empty() {
-        let _ = events.send(UpstreamEvent::AudioLevels(audio_chunk));
+        let _ = events.send(UpstreamEvent::AudioLevels(Bytes::from(audio_chunk)));
     }
 
-    // Mark ready once we've seen substantial state even without InCm (some firmwares).
-    if !*init_complete && cache.len() > 10 && !connected.load(Ordering::SeqCst) {
+    // Only accept clients after a real InCm — never the "10 commands" heuristic.
+    if saw_incm {
+        *init_complete = true;
         cache.set_ready(true);
-        connected.store(true, Ordering::SeqCst);
-        rel.opened = true;
-        info!("upstream ready (heuristic, no InCm yet)");
-        let _ = events.send(UpstreamEvent::Connected);
+        reached_ready.store(true, Ordering::SeqCst);
+        if !connected.swap(true, Ordering::SeqCst) {
+            info!(version = ?cache.version(), product = ?cache.product(), "upstream ready");
+            let _ = events.send(UpstreamEvent::Connected);
+            rel.opened = true;
+            let ack = build_init_complete_ack(rel.session_id, rel.ack.highest_recv.unwrap_or(0));
+            sock.send(&ack).await?;
+        }
     }
     Ok(())
 }
 
-fn rand_session() -> u16 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u16)
-        .unwrap_or(0x1234);
-    t ^ std::process::id() as u16
+fn random_session() -> u16 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::time::Instant;
+    let mut h = DefaultHasher::new();
+    Instant::now().hash(&mut h);
+    std::process::id().hash(&mut h);
+    std::thread::current().id().hash(&mut h);
+    h.finish() as u16
 }

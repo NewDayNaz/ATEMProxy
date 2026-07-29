@@ -61,6 +61,10 @@ impl StateCache {
         self.inner.read().map.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Ingest upstream packet payload commands into the cache.
     pub fn ingest_payload(&self, payload: &[u8]) {
         let cmds = match parse_commands(payload) {

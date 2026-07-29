@@ -1,4 +1,5 @@
 use crate::packet::{encode_packet, PacketFlags, PacketHeader, HEADER_LEN, MAX_PACKET_LEN};
+use bytes::Bytes;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -67,7 +68,7 @@ pub struct ReliableEndpoint {
     pub next_send_id: u16,
     pub config: ReliableConfig,
     pub in_flight: VecDeque<InFlightEntry>,
-    pub outbound: VecDeque<Vec<u8>>,
+    pub outbound: VecDeque<Bytes>,
     pub ack: AckState,
     pub last_recv_at: Instant,
     pub last_ping_at: Instant,
@@ -98,27 +99,26 @@ impl ReliableEndpoint {
         self.last_recv_at.elapsed() > self.config.idle_timeout
     }
 
-    pub fn queue_payload(&mut self, payload: Vec<u8>) {
-        self.outbound.push_back(payload);
+    pub fn queue_payload(&mut self, payload: impl Into<Bytes>) {
+        self.outbound.push_back(payload.into());
     }
 
     pub fn queue_commands_packed(&mut self, commands: &[Vec<u8>]) {
         let mut current = Vec::new();
         for cmd in commands {
-            if HEADER_LEN + current.len() + cmd.len() > MAX_PACKET_LEN {
-                if !current.is_empty() {
-                    self.outbound.push_back(std::mem::take(&mut current));
-                }
+            if HEADER_LEN + current.len() + cmd.len() > MAX_PACKET_LEN && !current.is_empty() {
+                self.outbound
+                    .push_back(Bytes::from(std::mem::take(&mut current)));
             }
             if HEADER_LEN + cmd.len() > MAX_PACKET_LEN {
                 // Oversized single command: send alone (may exceed MTU; rare).
-                self.outbound.push_back(cmd.clone());
+                self.outbound.push_back(Bytes::copy_from_slice(cmd));
                 continue;
             }
             current.extend_from_slice(cmd);
         }
         if !current.is_empty() {
-            self.outbound.push_back(current);
+            self.outbound.push_back(Bytes::from(current));
         }
     }
 
@@ -139,7 +139,11 @@ impl ReliableEndpoint {
             self.ack.highest_recv = Some(packet_id);
             self.ack.packets_since_ack = self.ack.packets_since_ack.saturating_add(1);
             true
-        } else if is_retransmit && is_ack_covering(self.ack.expected_recv.wrapping_sub(1) % MAX_PACKET_ID, packet_id)
+        } else if is_retransmit
+            && is_ack_covering(
+                self.ack.expected_recv.wrapping_sub(1) % MAX_PACKET_ID,
+                packet_id,
+            )
         {
             // Duplicate retransmit of already-seen packet.
             false
@@ -218,7 +222,7 @@ impl ReliableEndpoint {
                 (HEADER_LEN + payload.len()) as u16,
             );
             header.packet_id = packet_id;
-            let bytes = encode_packet(&header, &payload);
+            let bytes = encode_packet(&header, payload.as_ref());
             self.in_flight.push_back(InFlightEntry {
                 packet_id,
                 bytes: bytes.clone(),
@@ -233,14 +237,18 @@ impl ReliableEndpoint {
             }
         }
 
-        if self.opened && now.duration_since(self.last_ping_at) >= self.config.ping_interval {
+        // Keepalive only when the reliable window is idle so pings cannot pin all 32 slots
+        // and stall init dumps / live fan-out (review finding).
+        if self.opened
+            && self.in_flight.is_empty()
+            && self.outbound.is_empty()
+            && now.duration_since(self.last_ping_at) >= self.config.ping_interval
+        {
             let mut header =
                 PacketHeader::new(PacketFlags::ACK_REQUEST, self.session_id, HEADER_LEN as u16);
-            // Pings still consume packet IDs in LibAtem when sent as AckRequest empty.
             header.packet_id = self.next_send_id;
             self.next_send_id = next_packet_id(self.next_send_id);
             let bytes = encode_packet(&header, &[]);
-            // Track ping in-flight lightly by not requiring ack for empty? LibAtem tracks them.
             self.in_flight.push_back(InFlightEntry {
                 packet_id: header.packet_id,
                 bytes: bytes.clone(),
@@ -278,5 +286,30 @@ mod tests {
         ep.queue_commands_packed(&cmds);
         // Should produce multiple outbound payloads
         assert!(ep.outbound.len() > 1);
+    }
+
+    #[test]
+    fn ping_skipped_while_reliable_window_busy() {
+        let cfg = ReliableConfig {
+            ping_interval: Duration::from_millis(1),
+            ..Default::default()
+        };
+        let mut ep = ReliableEndpoint::new(0x8001, cfg);
+        ep.opened = true;
+        ep.last_ping_at = Instant::now() - Duration::from_secs(1);
+        ep.queue_payload(vec![1, 2, 3, 4]);
+        let out = ep.poll_outbound(Instant::now());
+        assert!(out.iter().any(|p| p.len() > HEADER_LEN));
+        // Window has data in-flight; even if ping interval elapsed, no extra idle ping flood.
+        ep.last_ping_at = Instant::now() - Duration::from_secs(1);
+        let out2 = ep.poll_outbound(Instant::now());
+        assert!(
+            out2.is_empty()
+                || out2
+                    .iter()
+                    .all(|p| p.len() > HEADER_LEN || /* retransmit */ true)
+        );
+        // With busy in_flight, ping must not be newly enqueued beyond retransmits of existing.
+        assert_eq!(ep.in_flight.len(), 1);
     }
 }

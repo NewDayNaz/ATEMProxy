@@ -28,7 +28,7 @@ impl Default for Config {
             atem: "192.168.1.50".to_string(),
             bind: "0.0.0.0:9910".parse().unwrap(),
             mdns: false,
-            client_idle_ms: 1000,
+            client_idle_ms: 5000,
             reconnect_ms: 1000,
             log: "info".to_string(),
             log_file: None,

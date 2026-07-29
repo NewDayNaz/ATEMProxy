@@ -1,6 +1,6 @@
 use atem_protocol::{
-    build_client_handshake, build_server_handshake_reply, decode_packet, PacketFlags,
-    HANDSHAKE_CLIENT_STATUS, HANDSHAKE_OK_STATUS,
+    build_client_handshake, build_server_handshake_reply, decode_packet, server_session_id,
+    PacketFlags, HANDSHAKE_CLIENT_STATUS, HANDSHAKE_OK_STATUS,
 };
 
 /// Golden-ish check that handshake packets match expected sizes and status bytes.
@@ -12,12 +12,13 @@ fn handshake_fixture_shape() {
     assert!(h.flags.contains(PacketFlags::HANDSHAKE));
     assert_eq!(payload[0], HANDSHAKE_CLIENT_STATUS);
 
-    let reply = build_server_handshake_reply(&h);
+    let assigned = server_session_id(5);
+    let reply = build_server_handshake_reply(assigned);
     assert_eq!(reply.len(), 20);
     let (rh, rpayload) = decode_packet(&reply).unwrap();
     assert!(rh.flags.contains(PacketFlags::HANDSHAKE));
     assert_eq!(rpayload[0], HANDSHAKE_OK_STATUS);
-    assert_eq!(rh.session_id, 0x1234);
+    assert_eq!(rh.session_id, assigned);
 }
 
 #[test]

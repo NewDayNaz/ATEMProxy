@@ -40,6 +40,6 @@ Init dump ends with `InCm`. This proxy **synthesizes** `InCm` at the end of late
 
 1. **Do not byte-forward** upstream UDP packets to clients (wrong session/seq).
 2. **Coalesce state** by `(command name, identity)` — never unbounded append of unknowns.
-3. **Session ids** must be per-client and consistent after handshake (`0x8000 | n`).
+3. **Session ids** must be per-client and consistent from HELLO through data (`0x8000 | n` in the handshake reply — do not echo a temp client id then flip).
 4. **Media lock/transfer** can hard-lock switchers if mishandled; v1 drops these — upload directly to the ATEM.
 5. **Audio levels** are high-rate; subscribe upstream only while ≥1 client wants them.

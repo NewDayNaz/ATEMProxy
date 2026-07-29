@@ -24,7 +24,7 @@ if (-not (Test-Path $ConfigPath)) {
 atem = "$Atem"
 bind = "0.0.0.0:9910"
 mdns = false
-client_idle_ms = 1000
+client_idle_ms = 5000
 reconnect_ms = 1000
 log = "info"
 "@ | Set-Content -Path $ConfigPath -Encoding UTF8

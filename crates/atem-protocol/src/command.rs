@@ -99,8 +99,8 @@ pub fn command_identity(name: CommandName, body: &[u8]) -> Vec<u8> {
             body.first().copied().into_iter().collect()
         }
         // Indexed state: first few bytes encode ME/keyer/aux index.
-        b"KeOn" | b"KeBP" | b"DskB" | b"DskS" | b"DskP" | b"ColV" | b"AuxS" | b"MPCE"
-        | b"MPrp" | b"CvlI" | b"InPr" | b"InPX" => body.get(..4).unwrap_or(body).to_vec(),
+        b"KeOn" | b"KeBP" | b"DskB" | b"DskS" | b"DskP" | b"ColV" | b"AuxS" | b"MPCE" | b"MPrp"
+        | b"CvlI" | b"InPr" | b"InPX" => body.get(..4).unwrap_or(body).to_vec(),
         _ => {
             if body.len() <= 64 {
                 body.to_vec()
