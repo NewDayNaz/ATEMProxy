@@ -1,0 +1,19 @@
+[package]
+name = "atem-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Blackmagic ATEM UDP protocol framing, handshake, and reliable transport helpers"
+
+[dependencies]
+bitflags = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
+
+[[test]]
+name = "fixtures_handshake"
+path = "tests/fixtures_handshake.rs"
