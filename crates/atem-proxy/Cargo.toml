@@ -14,7 +14,10 @@ atem-protocol = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
+hostname = { workspace = true }
+if-addrs = { workspace = true }
 indexmap = { workspace = true }
+mdns-sd = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }

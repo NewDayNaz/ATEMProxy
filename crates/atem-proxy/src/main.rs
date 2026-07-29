@@ -34,6 +34,10 @@ struct Cli {
     #[arg(long, global = true, env = "ATEM_PROXY_MDNS", num_args = 0..=1, default_missing_value = "true")]
     mdns: Option<bool>,
 
+    /// SoftAtem just-works profile (locks + media + mDNS)
+    #[arg(long, global = true, env = "ATEM_PROXY_SOFTATEM", num_args = 0..=1, default_missing_value = "true")]
+    softatem: Option<bool>,
+
     /// Log filter (e.g. info, atem_proxy=debug)
     #[arg(long, global = true, env = "ATEM_PROXY_LOG")]
     log: Option<String>,
@@ -91,13 +95,18 @@ fn init_logging(filter: &str, log_file: Option<&std::path::Path>) {
 }
 
 fn load_cfg(cli: &Cli) -> Result<Config> {
-    Config::load(
+    let mut cfg = Config::load(
         cli.config.as_deref(),
         cli.atem.clone(),
         cli.bind,
         cli.mdns,
         cli.log.clone(),
-    )
+    )?;
+    if let Some(v) = cli.softatem {
+        cfg.compat.softatem = v;
+        cfg.normalize();
+    }
+    Ok(cfg)
 }
 
 #[tokio::main]

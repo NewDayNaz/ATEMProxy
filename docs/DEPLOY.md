@@ -4,11 +4,25 @@ Same binary for console, Windows Service, systemd, and Docker.
 
 Config precedence: **CLI > env (`ATEM_PROXY_*`) > TOML file > defaults**.
 
+## SoftAtem (official ATEM Software Control)
+
+To point SoftAtem at the proxy and have media/locks work:
+
+```toml
+[compat]
+softatem = true
+```
+
+Or `atem-proxy --atem <ATEM_IP> --softatem`.
+
+Full notes and soak checklist: [`SOFTATEM.md`](SOFTATEM.md).
+
 ## Windows Service (recommended on a church Windows PC)
 
 1. Build: `cargo build --release`
 2. Edit/copy `deploy/atem-proxy.toml.example` or let the installer write `%ProgramData%\AtemProxy\atem-proxy.toml`
-3. Elevated PowerShell:
+3. For SoftAtem-through-proxy, set `[compat] softatem = true` in that TOML.
+4. Elevated PowerShell:
 
 ```powershell
 .\deploy\windows\install-service.ps1 -Atem 192.168.1.50
@@ -21,8 +35,8 @@ Or manually:
 .\target\release\atem-proxy.exe service start
 ```
 
-4. Allow inbound **UDP 9910** (installer tries to add a firewall rule).
-5. Point Companion / tally / secondary SoftAtem at the PC’s LAN IP. Keep media-upload SoftAtem pointed at the real ATEM.
+5. Allow inbound **UDP 9910** (installer tries to add a firewall rule).
+6. Point Companion / tally / SoftAtem at the PC’s LAN IP.
 
 Service name: `AtemProxy`. Stop/uninstall:
 
@@ -39,7 +53,7 @@ sudo cp target/release/atem-proxy /usr/local/bin/
 sudo useradd --system --no-create-home atem-proxy || true
 sudo mkdir -p /etc/atem-proxy
 sudo cp deploy/atem-proxy.toml.example /etc/atem-proxy/atem-proxy.toml
-# edit atem=...
+# edit atem=... and optionally compat.softatem = true
 sudo cp deploy/atem-proxy.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now atem-proxy
@@ -53,13 +67,12 @@ sudo systemctl enable --now atem-proxy
 
 ```bash
 export ATEM_PROXY_ATEM=192.168.1.50
+export ATEM_PROXY_SOFTATEM=true
 docker compose up -d --build
 ```
 
 On **Windows Docker Desktop**, host networking is not equivalent — prefer the native Windows Service for production on that machine; run the container on a Linux NUC/Pi instead.
 
-## What not to route through the proxy
+## Mission-critical panel
 
-- Large media pool uploads / downloads
-- Anything that needs ATEM lock ownership
-- Mission-critical single panel if you still have a free direct slot — put that one on the ATEM, everything else on the proxy
+Even with SoftAtem mode, if you still have a free direct ATEM slot, you may keep one critical panel on the real ATEM IP for maximum resilience. Everything else can use the proxy.

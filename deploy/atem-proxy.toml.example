@@ -4,9 +4,6 @@ atem = "192.168.1.50"
 # Client-facing UDP bind address
 bind = "0.0.0.0:9910"
 
-# Optional Bonjour / mDNS announce (clients can always connect by IP)
-mdns = false
-
 # Drop clients that go silent (milliseconds)
 client_idle_ms = 5000
 
@@ -18,3 +15,25 @@ log = "info"
 
 # Optional log file (Windows Service defaults to %ProgramData%\AtemProxy\atem-proxy.log)
 # log_file = "C:/ProgramData/AtemProxy/atem-proxy.log"
+
+# ---------------------------------------------------------------------------
+# SoftAtem just-works profile
+# When softatem = true, locks/media/mDNS are forced on (see Config::normalize).
+# Point ATEM Software Control at this host's IP (or pick it via Bonjour).
+# ---------------------------------------------------------------------------
+[compat]
+softatem = false
+
+[locks]
+# deny | single_owner
+mode = "deny"
+
+[media]
+enabled = false
+# Raise (e.g. 3) if the ATEM freezes during still uploads
+chunk_delay_ms = 0
+max_upload_mb = 64
+
+[discovery]
+# Announce as _blackmagic._tcp AtemSwitcher using upstream _pin/_ver
+mdns = false

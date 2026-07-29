@@ -23,12 +23,25 @@ if (-not (Test-Path $ConfigPath)) {
     @"
 atem = "$Atem"
 bind = "0.0.0.0:9910"
-mdns = false
 client_idle_ms = 5000
 reconnect_ms = 1000
 log = "info"
+
+[compat]
+softatem = true
+
+[locks]
+mode = "deny"
+
+[media]
+enabled = false
+chunk_delay_ms = 0
+max_upload_mb = 64
+
+[discovery]
+mdns = false
 "@ | Set-Content -Path $ConfigPath -Encoding UTF8
-    Write-Host "Wrote $ConfigPath"
+    Write-Host "Wrote $ConfigPath (compat.softatem=true for SoftAtem-through-proxy)"
 }
 
 & $ExePath service install --config $ConfigPath

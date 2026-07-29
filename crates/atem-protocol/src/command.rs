@@ -125,6 +125,42 @@ pub fn is_lock_command(name: CommandName) -> bool {
         || name.as_str().ok().is_some_and(|s| s.starts_with("Lock"))
 }
 
+/// Client-originated lock request (not upstream status).
+pub fn is_lock_request(name: CommandName) -> bool {
+    matches!(&name.0, b"LOCK" | b"PLCK")
+}
+
+/// Upstream lock status/obtainment notifications.
+pub fn is_lock_status(name: CommandName) -> bool {
+    matches!(&name.0, b"LKST" | b"LKOB")
+}
+
+/// Best-effort store id from lock/transfer command body (u16 BE at offset 0).
+pub fn lock_store_id(body: &[u8]) -> Option<u16> {
+    if body.len() < 2 {
+        return None;
+    }
+    Some(u16::from_be_bytes([body[0], body[1]]))
+}
+
+/// Whether a LOCK/PLCK body requests locked (true) vs unlocked (false).
+pub fn lock_request_enabled(body: &[u8]) -> bool {
+    // Common layouts: last byte or byte[2] is boolean state.
+    if body.len() >= 3 {
+        return body[2] != 0;
+    }
+    body.last().copied().unwrap_or(0) != 0
+}
+
+/// Build a client unlock request for a store (LOCK store, state=0).
+pub fn synthesize_unlock(store: u16) -> Vec<u8> {
+    let mut body = Vec::with_capacity(4);
+    body.extend_from_slice(&store.to_be_bytes());
+    body.push(0);
+    body.push(0);
+    serialize_command(CommandName(*b"LOCK"), &body)
+}
+
 pub fn is_transfer_command(name: CommandName) -> bool {
     matches!(
         &name.0,

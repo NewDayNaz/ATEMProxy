@@ -11,5 +11,6 @@ services:
       ATEM_PROXY_BIND: "${ATEM_PROXY_BIND:-0.0.0.0:9910}"
       ATEM_PROXY_LOG: "${ATEM_PROXY_LOG:-info}"
       ATEM_PROXY_MDNS: "${ATEM_PROXY_MDNS:-false}"
+      ATEM_PROXY_SOFTATEM: "${ATEM_PROXY_SOFTATEM:-false}"
     # volumes:
     #   - ./deploy/atem-proxy.toml.example:/etc/atem-proxy/atem-proxy.toml:ro

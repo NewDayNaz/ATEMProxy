@@ -10,7 +10,8 @@ mod session;
 
 pub use command::{
     command_identity, is_audio_levels_subscribe, is_ephemeral_command, is_lock_command,
-    is_transfer_command, parse_commands, parse_version, serialize_command, synthetic_init_complete,
+    is_lock_request, is_lock_status, is_transfer_command, lock_request_enabled, lock_store_id,
+    parse_commands, parse_version, serialize_command, synthesize_unlock, synthetic_init_complete,
     CommandName, CommandRef, INIT_COMPLETE,
 };
 pub use error::ProtocolError;

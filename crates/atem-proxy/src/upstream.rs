@@ -1,9 +1,11 @@
 use crate::cache::StateCache;
+use crate::locks::LockBroker;
 use anyhow::{bail, Context, Result};
 use atem_protocol::{
     build_client_handshake, build_init_complete_ack, decode_packet, is_ephemeral_command,
-    is_handshake_packet, parse_commands, parse_handshake_status, PacketFlags, ReliableConfig,
-    ReliableEndpoint, HANDSHAKE_OK_STATUS, INIT_COMPLETE,
+    is_handshake_packet, is_lock_status, is_transfer_command, parse_commands,
+    parse_handshake_status, PacketFlags, ReliableConfig, ReliableEndpoint, HANDSHAKE_OK_STATUS,
+    INIT_COMPLETE,
 };
 use bytes::Bytes;
 use std::net::SocketAddr;
@@ -23,6 +25,8 @@ pub enum UpstreamEvent {
     StatePayload(Bytes),
     /// High-rate audio levels for subscribers only.
     AudioLevels(Bytes),
+    /// Media transfer traffic — server routes to lock/transfer owner only.
+    TransferPayload(Bytes),
 }
 
 pub struct UpstreamHandle {
@@ -34,6 +38,7 @@ pub struct UpstreamHandle {
 pub fn spawn_upstream(
     atem: SocketAddr,
     cache: Arc<StateCache>,
+    locks: Arc<LockBroker>,
     cancel: CancellationToken,
     reconnect_ms: u64,
 ) -> UpstreamHandle {
@@ -51,6 +56,7 @@ pub fn spawn_upstream(
             match run_session(
                 atem,
                 &cache,
+                &locks,
                 &connected_flag,
                 &events_tx,
                 &mut cmd_rx,
@@ -65,6 +71,7 @@ pub fn spawn_upstream(
             let ok = reached_ready.load(Ordering::SeqCst);
             connected_flag.store(false, Ordering::SeqCst);
             cache.clear();
+            locks.clear();
             let _ = events_tx.send(UpstreamEvent::Disconnected);
             if cancel.is_cancelled() {
                 break;
@@ -89,9 +96,11 @@ pub fn spawn_upstream(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_session(
     atem: SocketAddr,
     cache: &StateCache,
+    locks: &LockBroker,
     connected: &AtomicBool,
     events: &broadcast::Sender<UpstreamEvent>,
     cmd_rx: &mut mpsc::Receiver<Vec<u8>>,
@@ -185,6 +194,7 @@ async fn run_session(
                     handle_upstream_payload(
                         payload,
                         cache,
+                        locks,
                         events,
                         &mut init_complete,
                         connected,
@@ -217,6 +227,7 @@ async fn run_session(
 async fn handle_upstream_payload(
     payload: &[u8],
     cache: &StateCache,
+    locks: &LockBroker,
     events: &broadcast::Sender<UpstreamEvent>,
     init_complete: &mut bool,
     connected: &AtomicBool,
@@ -236,10 +247,19 @@ async fn handle_upstream_payload(
 
     let mut state_chunk = Vec::new();
     let mut audio_chunk = Vec::new();
+    let mut transfer_chunk = Vec::new();
     let mut saw_incm = false;
     for cmd in &cmds {
         if cmd.name == INIT_COMPLETE {
             saw_incm = true;
+            continue;
+        }
+        if is_transfer_command(cmd.name) {
+            transfer_chunk.extend_from_slice(cmd.raw);
+            continue;
+        }
+        if is_lock_status(cmd.name) {
+            state_chunk.extend_from_slice(cmd.raw);
             continue;
         }
         if is_ephemeral_command(cmd.name) {
@@ -250,11 +270,15 @@ async fn handle_upstream_payload(
     }
 
     if !state_chunk.is_empty() {
+        locks.on_upstream_lock_status(&state_chunk);
         cache.ingest_payload(&state_chunk);
         let _ = events.send(UpstreamEvent::StatePayload(Bytes::from(state_chunk)));
     }
     if !audio_chunk.is_empty() {
         let _ = events.send(UpstreamEvent::AudioLevels(Bytes::from(audio_chunk)));
+    }
+    if !transfer_chunk.is_empty() {
+        let _ = events.send(UpstreamEvent::TransferPayload(Bytes::from(transfer_chunk)));
     }
 
     // Only accept clients after a real InCm — never the "10 commands" heuristic.

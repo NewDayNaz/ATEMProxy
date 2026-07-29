@@ -1,5 +1,6 @@
 use crate::cache::StateCache;
 use crate::filter::{CommandFilter, FilterAction};
+use crate::transfer::TransferLane;
 use crate::upstream::{UpstreamEvent, UpstreamHandle};
 use anyhow::{Context, Result};
 use atem_protocol::{
@@ -29,6 +30,7 @@ pub async fn run_server(
     cache: Arc<StateCache>,
     upstream: UpstreamHandle,
     filter: Arc<CommandFilter>,
+    transfer: Arc<TransferLane>,
     client_idle_ms: u64,
     cancel: CancellationToken,
 ) -> Result<()> {
@@ -43,10 +45,10 @@ pub async fn run_server(
         Arc::new(Mutex::new(HashMap::new()));
     let next_sid = Arc::new(AtomicU16::new(1));
 
-    // Fan-out task from upstream events
     let mut events = upstream.events.subscribe();
     let sessions_e = sessions.clone();
     let cache_e = cache.clone();
+    let transfer_e = transfer.clone();
     let cancel_e = cancel.clone();
     tokio::spawn(async move {
         loop {
@@ -57,6 +59,7 @@ pub async fn run_server(
                         Ok(UpstreamEvent::Connected) => {}
                         Ok(UpstreamEvent::Disconnected) => {
                             sessions_e.lock().clear();
+                            transfer_e.clear();
                             info!("cleared client sessions after upstream disconnect");
                         }
                         Ok(UpstreamEvent::StatePayload(payload)) => {
@@ -73,6 +76,18 @@ pub async fn run_server(
                                 if sess.opened && sess.audio {
                                     sess.rel.queue_payload(payload.clone());
                                 }
+                            }
+                        }
+                        Ok(UpstreamEvent::TransferPayload(payload)) => {
+                            if let Some(owner) = transfer_e.fanout_owner() {
+                                let mut g = sessions_e.lock();
+                                if let Some(sess) = g.get_mut(&owner) {
+                                    if sess.opened {
+                                        sess.rel.queue_payload(payload);
+                                    }
+                                }
+                            } else {
+                                debug!("transfer payload with no owner; dropped");
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -92,13 +107,14 @@ pub async fn run_server(
         }
     });
 
-    // Send / timeout tick
     let sessions_t = sessions.clone();
     let sock_t = sock.clone();
     let filter_t = filter.clone();
     let upstream_t = upstream.cmd_tx.clone();
+    let transfer_t = transfer.clone();
     let cancel_t = cancel.clone();
     let idle = Duration::from_millis(client_idle_ms.max(500));
+    let chunk_delay = Duration::from_millis(transfer.chunk_delay_ms());
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_millis(5));
         loop {
@@ -124,16 +140,20 @@ pub async fn run_server(
                         }
                     }
                     for addr in dead {
-                        if let Some(disable) = filter_t.client_disconnected(addr) {
-                            if let Err(e) = upstream_t.send(disable).await {
-                                warn!(error = %e, "failed to forward audio unsubscribe");
-                            } else {
-                                info!(%addr, "disabled upstream audio levels (last subscriber left)");
+                        for cmd in filter_t.client_disconnected(addr) {
+                            if let Err(e) = upstream_t.send(cmd).await {
+                                warn!(error = %e, "failed to forward disconnect cleanup cmd");
                             }
                         }
                         info!(%addr, "client timed out");
                     }
                     for (addr, pkt) in packets {
+                        if chunk_delay > Duration::ZERO
+                            && transfer_t.current_owner() == Some(addr)
+                            && pkt.len() > 12
+                        {
+                            tokio::time::sleep(chunk_delay).await;
+                        }
                         let _ = sock_t.send_to(&pkt, addr).await;
                     }
                 }
@@ -260,7 +280,6 @@ async fn handle_datagram(
         sock.send_to(&req, addr).await?;
     }
 
-    // Awaited send: backpressure instead of silent try_send drops.
     for raw in forward_cmds {
         if let Err(e) = upstream.cmd_tx.send(raw).await {
             warn!(%addr, error = %e, "upstream command channel closed");
