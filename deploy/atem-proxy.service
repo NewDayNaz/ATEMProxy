@@ -1,0 +1,18 @@
+[Unit]
+Description=ATEM Proxy (transparent multi-client UDP relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=atem-proxy
+Group=atem-proxy
+ExecStart=/usr/local/bin/atem-proxy --config /etc/atem-proxy/atem-proxy.toml
+Restart=on-failure
+RestartSec=2
+# Allow binding privileged ports if you move off 9910; default is unprivileged.
+AmbientCapabilities=
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

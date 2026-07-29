@@ -1,0 +1,15 @@
+# Prefer host networking on Linux so UDP clients/ATEM see a normal LAN peer.
+# On Windows Docker Desktop, use the native Windows Service instead for production.
+services:
+  atem-proxy:
+    image: ghcr.io/jonbons/atem-proxy:latest
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      ATEM_PROXY_ATEM: "${ATEM_PROXY_ATEM:-192.168.1.50}"
+      ATEM_PROXY_BIND: "${ATEM_PROXY_BIND:-0.0.0.0:9910}"
+      ATEM_PROXY_LOG: "${ATEM_PROXY_LOG:-info}"
+      ATEM_PROXY_MDNS: "${ATEM_PROXY_MDNS:-false}"
+    # volumes:
+    #   - ./deploy/atem-proxy.toml.example:/etc/atem-proxy/atem-proxy.toml:ro
