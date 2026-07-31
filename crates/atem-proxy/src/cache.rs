@@ -1,6 +1,7 @@
 use atem_protocol::{
     command_identity, is_ephemeral_command, is_lock_command, is_transfer_command, parse_commands,
-    parse_version, serialize_command, synthetic_init_complete, CommandName, INIT_COMPLETE,
+    parse_product_name, parse_version, serialize_command, synthetic_init_complete, CommandName,
+    INIT_COMPLETE,
 };
 use indexmap::IndexMap;
 use parking_lot::RwLock;
@@ -91,8 +92,8 @@ impl StateCache {
                 g.version = parse_version(cmd.body);
             }
             if cmd.name.0 == *b"_pin" {
-                if let Ok(s) = std::str::from_utf8(cmd.body) {
-                    g.product = Some(s.trim_end_matches('\0').to_string());
+                if let Some(name) = parse_product_name(cmd.body) {
+                    g.product = Some(name);
                 }
             }
             let key = CacheKey {

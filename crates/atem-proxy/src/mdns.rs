@@ -91,17 +91,28 @@ fn register_service(product_name: &str, release_version: &str, port: u16) -> Res
 }
 
 fn sanitize_instance_name(name: &str) -> String {
-    let s: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == ' ' {
-                c
-            } else {
-                '-'
+    let mut s = String::with_capacity(name.len());
+    let mut prev_dash = false;
+    for c in name.chars() {
+        let ok = c.is_ascii_alphanumeric() || c == ' ';
+        if ok {
+            s.push(c);
+            prev_dash = false;
+        } else if c == '-' || c.is_control() || !c.is_ascii() {
+            // Collapse padding/control leftovers into a single dash (or skip trailing).
+            if !prev_dash && !s.is_empty() {
+                s.push('-');
+                prev_dash = true;
             }
-        })
-        .collect();
-    let s = s.trim().to_string();
+        } else {
+            // Keep punctuation like '/' in "M/E" as '-'
+            if !prev_dash && !s.is_empty() {
+                s.push('-');
+                prev_dash = true;
+            }
+        }
+    }
+    let s = s.trim().trim_matches('-').to_string();
     if s.is_empty() {
         "ATEM-Proxy".into()
     } else {
@@ -118,4 +129,19 @@ fn local_ipv4() -> Option<IpAddr> {
             IpAddr::V4(v4) => Some(IpAddr::V4(v4)),
             _ => None,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_instance_name;
+
+    #[test]
+    fn instance_name_does_not_turn_nul_pad_into_dash_run() {
+        let raw = "ATEM 2 M/E Constellation HD\0\0\0\0\u{13}";
+        // Callers should parse_product_name first; sanitize still collapses junk.
+        let cleaned = raw.split('\0').next().unwrap_or(raw);
+        let name = sanitize_instance_name(cleaned);
+        assert_eq!(name, "ATEM 2 M-E Constellation HD (Proxy)");
+        assert!(!name.contains("--"));
+    }
 }

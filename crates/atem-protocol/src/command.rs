@@ -82,6 +82,24 @@ pub fn parse_version(body: &[u8]) -> Option<(u16, u16)> {
     ))
 }
 
+/// Parse `_pin` product name from a fixed-width / padded body.
+///
+/// ATEM sends a C-string in a padded field (NUL padding, sometimes trailing
+/// control bytes like `0x13`). Truncate at the first NUL, then strip trailing
+/// non-printable bytes so mDNS/logs show a clean product name.
+pub fn parse_product_name(body: &[u8]) -> Option<String> {
+    let end = body.iter().position(|&b| b == 0).unwrap_or(body.len());
+    let bytes = &body[..end];
+    let s = std::str::from_utf8(bytes).ok()?.trim_end_matches(|c: char| {
+        c.is_control() || c.is_whitespace()
+    });
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
 /// Build a synthetic `InCm` for late-join dumps.
 ///
 /// Real ATEM / LibAtem emit a 4-byte body (`01 00 00 00`), i.e. a 12-byte command.
@@ -209,5 +227,16 @@ mod tests {
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].name, INIT_COMPLETE);
         assert_eq!(cmds[0].body, &[0x01, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn product_name_truncates_at_nul_and_drops_control_pad() {
+        let mut body = b"ATEM 2 M/E Constellation HD".to_vec();
+        body.extend_from_slice(&[0u8; 13]);
+        body.push(0x13);
+        assert_eq!(
+            parse_product_name(&body).as_deref(),
+            Some("ATEM 2 M/E Constellation HD")
+        );
     }
 }
