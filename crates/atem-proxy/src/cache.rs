@@ -159,10 +159,17 @@ mod tests {
     fn unknown_commands_do_not_grow_unbounded() {
         let cache = StateCache::new();
         for i in 0..100u8 {
-            // Same name + same body → one entry
-            cache.ingest_payload(&framed(*b"ZzZz", &[1, 2, 3, i % 2]));
+            // Unknown opcodes coalesce by name only — changing body must not grow the cache.
+            cache.ingest_payload(&framed(*b"ZzZz", &[1, 2, 3, i]));
         }
-        // Two distinct bodies → at most 2 entries
-        assert!(cache.len() <= 2);
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn time_commands_are_not_cached() {
+        let cache = StateCache::new();
+        cache.ingest_payload(&framed(*b"Time", &[1, 2, 3, 4, 5, 6, 7, 8]));
+        cache.ingest_payload(&framed(*b"PrgI", &[0, 0, 0, 1]));
+        assert_eq!(cache.len(), 1);
     }
 }

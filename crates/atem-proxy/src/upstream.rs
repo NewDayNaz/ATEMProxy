@@ -161,7 +161,22 @@ async fn run_session(
             _ = cancel.cancelled() => return Ok(()),
             cmd = cmd_rx.recv() => {
                 match cmd {
-                    Some(raw) if raw.len() >= 8 => pending_cmds.push(raw),
+                    Some(raw) if raw.len() >= 8 => {
+                        pending_cmds.push(raw);
+                        while let Ok(more) = cmd_rx.try_recv() {
+                            if more.len() >= 8 {
+                                pending_cmds.push(more);
+                            }
+                        }
+                        // Flush immediately so client cuts are not stuck behind a busy
+                        // recv loop (mock ATEM / chatty peers can starve the tick arm).
+                        let batch = std::mem::take(&mut pending_cmds);
+                        rel.queue_commands_packed(&batch);
+                        let now = Instant::now();
+                        for pkt in rel.poll_outbound(now) {
+                            sock.send(&pkt).await?;
+                        }
+                    }
                     Some(_) => {}
                     None => return Ok(()),
                 }

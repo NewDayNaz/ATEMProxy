@@ -223,7 +223,11 @@ async fn handle_datagram(
         };
         let mut rel = ReliableEndpoint::new(session_id, cfg);
         // Clients ACK HELLO as packet 0 and expect the init dump to start at 1.
+        // atem-connection / LibAtem also *send* their first reliable packet as id 1
+        // (not 0). If we leave expected_recv at 0, the first Companion cut/preview
+        // triggers a retransmit request for missing packet 0 → client reconnect loop.
         rel.next_send_id = 1;
+        rel.ack.expected_recv = 1;
         rel.note_recv();
         sessions.lock().insert(
             addr,
@@ -274,7 +278,15 @@ async fn handle_datagram(
                 hdr.packet_id,
                 hdr.flags.contains(PacketFlags::IS_RETRANSMIT),
             );
-            if !ok && !payload.is_empty() {
+            if !ok {
+                if !payload.is_empty() {
+                    warn!(
+                        %addr,
+                        got = hdr.packet_id,
+                        expect = sess.rel.ack.expected_recv,
+                        "client reliable packet out of order; requesting retransmit"
+                    );
+                }
                 retransmit = Some(sess.rel.build_retransmit_request());
             } else if !payload.is_empty() {
                 let actions = filter.process_payload(addr, payload);

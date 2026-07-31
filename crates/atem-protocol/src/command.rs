@@ -94,8 +94,9 @@ pub fn synthetic_init_complete() -> Vec<u8> {
 
 /// Identity bytes used for state-cache coalescing.
 ///
-/// Prefer a short stable prefix of the body (indexes), falling back to the full body
-/// for small commands so unknown opcodes still coalesce by content.
+/// Prefer a short stable prefix of the body (indexes). Unknown opcodes coalesce by
+/// name only (latest wins) so rapidly changing small payloads cannot grow the
+/// late-join dump without bound.
 pub fn command_identity(name: CommandName, body: &[u8]) -> Vec<u8> {
     match &name.0 {
         b"_ver" | b"InCm" | b"_pin" | b"_top" | b"powr" => Vec::new(),
@@ -106,14 +107,8 @@ pub fn command_identity(name: CommandName, body: &[u8]) -> Vec<u8> {
         // Indexed state: first few bytes encode ME/keyer/aux index.
         b"KeOn" | b"KeBP" | b"DskB" | b"DskS" | b"DskP" | b"ColV" | b"AuxS" | b"MPCE" | b"MPrp"
         | b"CvlI" | b"InPr" | b"InPX" => body.get(..4).unwrap_or(body).to_vec(),
-        _ => {
-            if body.len() <= 64 {
-                body.to_vec()
-            } else {
-                // Large opaque: coalesce by name only (latest wins for that opcode).
-                Vec::new()
-            }
-        }
+        // Unknown / unlisted: name-only key (empty identity).
+        _ => Vec::new(),
     }
 }
 
@@ -121,7 +116,7 @@ pub fn command_identity(name: CommandName, body: &[u8]) -> Vec<u8> {
 pub fn is_ephemeral_command(name: CommandName) -> bool {
     matches!(
         &name.0,
-        b"AMLv" | b"AMmO" | b"FASP" | b"FMLv" | b"FAtl" | b"FAsp"
+        b"AMLv" | b"AMmO" | b"FASP" | b"FMLv" | b"FAtl" | b"FAsp" | b"Time" | b"TimC" | b"TCCc"
     )
 }
 

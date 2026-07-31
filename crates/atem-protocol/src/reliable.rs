@@ -306,6 +306,20 @@ mod tests {
     }
 
     #[test]
+    fn server_expects_client_reliable_starting_at_one() {
+        // Mirror downstream ClientSession setup after HELLO.
+        let mut ep = ReliableEndpoint::new(0x8001, ReliableConfig::default());
+        ep.next_send_id = 1;
+        ep.ack.expected_recv = 1;
+        assert!(
+            !ep.accept_reliable(0, false),
+            "client packet 0 must not be required (Companion never sends it)"
+        );
+        assert!(ep.accept_reliable(1, false));
+        assert_eq!(ep.ack.expected_recv, 2);
+    }
+
+    #[test]
     fn ping_skipped_while_reliable_window_busy() {
         let cfg = ReliableConfig {
             ping_interval: Duration::from_millis(1),

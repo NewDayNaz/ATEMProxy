@@ -33,11 +33,11 @@ This turns on:
 | Companion / tally | Control + state; do not compete for media locks |
 | Second SoftAtem | Control-only is OK; media lock will be denied if busy |
 
-### Companion stuck on “Connecting”
+### Companion stuck on “Connecting” / commands do nothing
 
-If proxy logs show `client handshake` + `queued init dump` but Companion never goes OK, rebuild with the LibAtem-shaped synthetic `InCm` (12-byte body `01 00 00 00`). Empty 8-byte `InCm` is ignored by Companion’s `atem-connection` parser.
-
-Also ensure Companion’s host field is the **proxy LAN IP** (port `9910`), not the real ATEM — Companion does not use SoftAtem’s Bonjour picker.
+- Empty 8-byte synthetic `InCm` is ignored by Companion’s `atem-connection` parser — use the LibAtem-shaped 12-byte `InCm` (`01 00 00 00`).
+- If logs show a reconnect storm (`client handshake` every ~1s, growing dump sizes, `client timed out`) and buttons do nothing while SoftAtem→ATEM changes still appear in Companion, the proxy was expecting client reliable packet id `0`. Companion sends from `1`; a retransmit ask for `0` forces reconnect. Fixed by setting `expected_recv = 1` after HELLO.
+- Point Companion at the **proxy LAN IP** (port `9910`), not the real ATEM.
 
 ## Soak checklist (hardware)
 
