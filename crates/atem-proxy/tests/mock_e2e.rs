@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 async fn mock_atem(sock: UdpSocket) {
     let mut buf = [0u8; 2048];
     let session = 0x8001u16;
-    let mut next_id = 0u16;
+    let mut next_id = 1u16;
     let mut dumped = false;
     loop {
         let Ok((n, peer)) = sock.recv_from(&mut buf).await else {
@@ -27,10 +27,10 @@ async fn mock_atem(sock: UdpSocket) {
             let reply = build_server_handshake_reply(session);
             let _ = sock.send_to(&reply, peer).await;
             dumped = false;
-            next_id = 0;
+            next_id = 1;
             continue;
         }
-        // After client ACK / any traffic, send init dump once (packet id 0).
+        // After client ACK / any traffic, send init dump once (first reliable id is 1).
         if !dumped {
             let mut body = serialize_command(CommandName(*b"_ver"), &[0, 2, 0, 30]);
             body.extend(serialize_command(CommandName(*b"PrgI"), &[0, 0, 0, 1]));

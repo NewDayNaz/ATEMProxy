@@ -19,7 +19,8 @@ Flags (LibAtem-style): `AckRequest=1`, `Handshake=2`, `IsRetransmit=4`, `Retrans
 
 1. Client sends HELLO (`Handshake` flag) with status `0x01`.
 2. Switcher/proxy replies HELLO with status `0x02` (OK) or `0x04` (restart).
-3. Client ACKs; subsequent packets carry the assigned session id.
+3. Client ACKs the HELLO `packet_id` (usually `0`); the init dump’s first reliable packet is the **next** id (usually `1`), not a second `0`.
+4. Subsequent packets carry the assigned session id.
 
 ## Reliability
 

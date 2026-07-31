@@ -3,7 +3,7 @@ use crate::locks::LockBroker;
 use anyhow::{bail, Context, Result};
 use atem_protocol::{
     build_client_handshake, build_init_complete_ack, decode_packet, is_ephemeral_command,
-    is_handshake_packet, is_lock_status, is_transfer_command, parse_commands,
+    is_handshake_packet, is_lock_status, is_transfer_command, next_packet_id, parse_commands,
     parse_handshake_status, PacketFlags, ReliableConfig, ReliableEndpoint, HANDSHAKE_OK_STATUS,
     INIT_COMPLETE,
 };
@@ -134,12 +134,20 @@ async fn run_session(
         );
     }
 
+    // Match atem-connection / real ATEM: ACK the HELLO packet id, then expect the next
+    // id for the init dump (first reliable data is usually 1, not 0).
     let mut session_id = hdr.session_id;
     let mut rel = ReliableEndpoint::new(session_id, ReliableConfig::default());
-    if let Some(ack) = {
-        rel.ack.highest_recv = Some(0);
-        rel.build_ack_packet()
-    } {
+    rel.ack.highest_recv = Some(hdr.packet_id);
+    rel.ack.expected_recv = next_packet_id(hdr.packet_id);
+    rel.next_send_id = 1;
+    info!(
+        session = format!("0x{session_id:04x}"),
+        hello_pkt = hdr.packet_id,
+        expect = rel.ack.expected_recv,
+        "upstream handshake ok"
+    );
+    if let Some(ack) = rel.build_ack_packet() {
         sock.send(&ack).await?;
     }
 

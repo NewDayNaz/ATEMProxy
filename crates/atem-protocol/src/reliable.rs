@@ -289,6 +289,20 @@ mod tests {
     }
 
     #[test]
+    fn after_hello_ack_first_reliable_data_is_next_id() {
+        // Real ATEM / atem-connection: ACK HELLO packet_id (usually 0), then accept 1+.
+        let mut ep = ReliableEndpoint::new(0x8001, ReliableConfig::default());
+        let hello_pkt = 0u16;
+        ep.ack.highest_recv = Some(hello_pkt);
+        ep.ack.expected_recv = next_packet_id(hello_pkt);
+        ep.next_send_id = 1;
+        assert!(!ep.accept_reliable(0, false), "packet 0 already covered by HELLO ack");
+        assert!(ep.accept_reliable(1, false));
+        assert_eq!(ep.ack.expected_recv, 2);
+        assert_eq!(ep.next_send_id, 1);
+    }
+
+    #[test]
     fn ping_skipped_while_reliable_window_busy() {
         let cfg = ReliableConfig {
             ping_interval: Duration::from_millis(1),

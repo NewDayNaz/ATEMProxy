@@ -213,6 +213,8 @@ async fn handle_datagram(
             ..Default::default()
         };
         let mut rel = ReliableEndpoint::new(session_id, cfg);
+        // Clients ACK HELLO as packet 0 and expect the init dump to start at 1.
+        rel.next_send_id = 1;
         rel.note_recv();
         sessions.lock().insert(
             addr,
