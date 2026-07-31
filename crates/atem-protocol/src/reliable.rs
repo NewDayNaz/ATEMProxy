@@ -296,7 +296,10 @@ mod tests {
         ep.ack.highest_recv = Some(hello_pkt);
         ep.ack.expected_recv = next_packet_id(hello_pkt);
         ep.next_send_id = 1;
-        assert!(!ep.accept_reliable(0, false), "packet 0 already covered by HELLO ack");
+        assert!(
+            !ep.accept_reliable(0, false),
+            "packet 0 already covered by HELLO ack"
+        );
         assert!(ep.accept_reliable(1, false));
         assert_eq!(ep.ack.expected_recv, 2);
         assert_eq!(ep.next_send_id, 1);
