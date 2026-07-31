@@ -2,7 +2,7 @@
 # On Windows Docker Desktop, use the native Windows Service instead for production.
 services:
   atem-proxy:
-    image: ghcr.io/newdaynaz/atemproxy:latest
+    image: ghcr.io/newdaynaz/atem-proxy:latest
     build: .
     network_mode: host
     restart: unless-stopped
