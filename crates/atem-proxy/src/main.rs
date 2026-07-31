@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use atem_proxy::{run_proxy, Config};
 use clap::{Parser, Subcommand};
 use std::net::SocketAddr;
