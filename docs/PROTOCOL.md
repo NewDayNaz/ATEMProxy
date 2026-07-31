@@ -35,7 +35,7 @@ Payload is a sequence of framed commands:
 
 `u16 length | u16 reserved | 4-byte name | body`
 
-Init dump ends with `InCm`. This proxy **synthesizes** `InCm` at the end of late-join dumps and never stores historical `InCm` blobs mid-cache.
+Init dump ends with `InCm`. This proxy **synthesizes** `InCm` (LibAtem-shaped 12-byte command with body `01 00 00 00`) at the end of late-join dumps and never stores historical `InCm` blobs mid-cache. An empty 8-byte `InCm` is skipped by Companion/`atem-connection` (`while (buffer.length > 8)`).
 
 ## Proxy gotchas
 

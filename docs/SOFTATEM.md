@@ -33,6 +33,12 @@ This turns on:
 | Companion / tally | Control + state; do not compete for media locks |
 | Second SoftAtem | Control-only is OK; media lock will be denied if busy |
 
+### Companion stuck on “Connecting”
+
+If proxy logs show `client handshake` + `queued init dump` but Companion never goes OK, rebuild with the LibAtem-shaped synthetic `InCm` (12-byte body `01 00 00 00`). Empty 8-byte `InCm` is ignored by Companion’s `atem-connection` parser.
+
+Also ensure Companion’s host field is the **proxy LAN IP** (port `9910`), not the real ATEM — Companion does not use SoftAtem’s Bonjour picker.
+
 ## Soak checklist (hardware)
 
 - [ ] SoftAtem connects by IP

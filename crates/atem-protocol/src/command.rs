@@ -82,9 +82,14 @@ pub fn parse_version(body: &[u8]) -> Option<(u16, u16)> {
     ))
 }
 
-/// Build a synthetic empty `InCm` command for late-join dumps.
+/// Build a synthetic `InCm` for late-join dumps.
+///
+/// Real ATEM / LibAtem emit a 4-byte body (`01 00 00 00`), i.e. a 12-byte command.
+/// Companion's `atem-connection` parser uses `while (buffer.length > 8)`, so an
+/// empty 8-byte `InCm` left as the trailing remainder of a packet is never
+/// deserialized — the client spins on "Connecting" forever.
 pub fn synthetic_init_complete() -> Vec<u8> {
-    serialize_command(INIT_COMPLETE, &[])
+    serialize_command(INIT_COMPLETE, &[0x01, 0x00, 0x00, 0x00])
 }
 
 /// Identity bytes used for state-cache coalescing.
@@ -199,5 +204,15 @@ mod tests {
         assert_eq!(a, b);
         let other_me = command_identity(CommandName(*b"PrgI"), &[1, 0, 0, 2]);
         assert_ne!(a, other_me);
+    }
+
+    #[test]
+    fn synthetic_incm_is_twelve_bytes_like_libatem() {
+        let raw = synthetic_init_complete();
+        assert_eq!(raw.len(), 12, "Companion skips trailing 8-byte InCm");
+        let cmds = parse_commands(&raw).unwrap();
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].name, INIT_COMPLETE);
+        assert_eq!(cmds[0].body, &[0x01, 0x00, 0x00, 0x00]);
     }
 }

@@ -199,8 +199,17 @@ async fn handle_datagram(
     let (hdr, payload) = decode_packet(data)?;
 
     if is_handshake_packet(hdr.flags) {
-        if !upstream.connected.load(Ordering::SeqCst) || !cache.is_ready() {
-            debug!(%addr, "rejecting handshake; upstream not ready");
+        let connected = upstream.connected.load(Ordering::SeqCst);
+        let ready = cache.is_ready();
+        if !connected || !ready {
+            // Companion/SoftAtem will spin forever if we silently drop HELLO.
+            // Keep this at warn so default `log = "info"` shows the cause.
+            warn!(
+                %addr,
+                connected,
+                ready,
+                "rejecting client handshake; upstream not ready"
+            );
             return Ok(());
         }
         let sid_index = next_sid.fetch_add(1, Ordering::SeqCst);
@@ -234,7 +243,14 @@ async fn handle_datagram(
     {
         let mut g = sessions.lock();
         let Some(sess) = g.get_mut(&addr) else {
-            debug!(%addr, "packet from unknown client; ignored");
+            // Non-HELLO traffic before a session is almost always a mis-pointed
+            // client or a stale peer after idle timeout — surface it.
+            warn!(
+                %addr,
+                flags = ?hdr.flags,
+                len = data.len(),
+                "packet from unknown client; ignored (no session — client may be pointed at wrong host, or HELLO was dropped)"
+            );
             return Ok(());
         };
         sess.rel.note_recv();
