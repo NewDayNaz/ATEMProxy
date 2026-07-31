@@ -182,6 +182,7 @@ fn ctrlc_impl<F: Fn() + Send + 'static>(f: F) -> Result<()> {
 #[cfg(windows)]
 mod windows_svc {
     use super::*;
+    use anyhow::Context;
     use std::ffi::OsString;
     use std::time::Duration;
     use windows_service::service::{
