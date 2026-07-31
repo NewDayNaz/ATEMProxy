@@ -9,7 +9,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/jonbons/atem-proxy"
+repository = "https://github.com/newdaynaz/atemproxy"
 
 [workspace.dependencies]
 atem-protocol = { path = "crates/atem-protocol" }
