@@ -90,9 +90,9 @@ pub fn parse_version(body: &[u8]) -> Option<(u16, u16)> {
 pub fn parse_product_name(body: &[u8]) -> Option<String> {
     let end = body.iter().position(|&b| b == 0).unwrap_or(body.len());
     let bytes = &body[..end];
-    let s = std::str::from_utf8(bytes).ok()?.trim_end_matches(|c: char| {
-        c.is_control() || c.is_whitespace()
-    });
+    let s = std::str::from_utf8(bytes)
+        .ok()?
+        .trim_end_matches(|c: char| c.is_control() || c.is_whitespace());
     if s.is_empty() {
         None
     } else {

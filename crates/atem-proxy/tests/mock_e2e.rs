@@ -36,7 +36,10 @@ async fn mock_atem(sock: UdpSocket, forwarded_cuts: Arc<AtomicUsize>) {
         if !dumped {
             let mut body = serialize_command(CommandName(*b"_ver"), &[0, 2, 0, 30]);
             body.extend(serialize_command(CommandName(*b"PrgI"), &[0, 0, 0, 1]));
-            body.extend(serialize_command(CommandName(*b"InCm"), &[0x01, 0x00, 0x00, 0x00]));
+            body.extend(serialize_command(
+                CommandName(*b"InCm"),
+                &[0x01, 0x00, 0x00, 0x00],
+            ));
             let mut h =
                 PacketHeader::new(PacketFlags::ACK_REQUEST, session, (12 + body.len()) as u16);
             h.packet_id = next_id;
@@ -153,18 +156,15 @@ async fn client_send_cut(proxy: SocketAddr) -> bool {
 
     // Companion-style: first client reliable packet id is 1, not 0.
     let cut = serialize_command(CommandName(*b"DCut"), &[0, 0]);
-    let mut h = PacketHeader::new(
-        PacketFlags::ACK_REQUEST,
-        session,
-        (12 + cut.len()) as u16,
-    );
+    let mut h = PacketHeader::new(PacketFlags::ACK_REQUEST, session, (12 + cut.len()) as u16);
     h.packet_id = 1;
     sock.send(&encode_packet(&h, &cut)).await.unwrap();
 
     // Yield so the proxy task can recv/forward on multi-thread or current-thread runtimes.
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(25)).await;
-        while let Ok(Ok(n)) = tokio::time::timeout(Duration::from_millis(1), sock.recv(&mut buf)).await
+        while let Ok(Ok(n)) =
+            tokio::time::timeout(Duration::from_millis(1), sock.recv(&mut buf)).await
         {
             if let Ok((hdr, _)) = decode_packet(&buf[..n]) {
                 if hdr.flags.contains(PacketFlags::ACK_REQUEST) {
